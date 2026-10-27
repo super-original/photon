@@ -100,7 +100,6 @@ jobs:
         run: sh packaging/macos/bundle.sh dist
 
       - name: Smoke test from a moved copy
-        continue-on-error: true
         run: |
           mkdir -p /tmp/moved
           ditto dist/Photon.app /tmp/moved/Photon.app
@@ -112,6 +111,7 @@ jobs:
           status=0; wait $pid || status=$?
           tail -150 smoke.log
           echo "exit status: $status"
+          if grep -q "Library not loaded" smoke.log; then exit 1; fi
           exit $status
 
       - name: Zip

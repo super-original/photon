@@ -25,6 +25,36 @@ for libraries in lib lib64; do
     fi
 done
 
+# Pull in every other library the binaries load by @rpath (vcpkg's
+# dependencies live under vcpkg_installed), repeating until none are missing.
+search="$root/build/engine-release/lib $root/build/engine-release/lib64"
+for libraries in "$root"/build/engine-release/vcpkg_installed/*/lib; do
+    case "$libraries" in */debug/*) ;; *) search="$search $libraries" ;; esac
+done
+while :; do
+    missing=$(for file in "$contents/MacOS/"* "$contents/Frameworks/"*; do
+        [ -f "$file" ] && [ ! -L "$file" ] || continue
+        file -b "$file" | grep -q Mach-O || continue
+        otool -L "$file" | tail -n +2 | awk '{print $1}' | sed -n 's#^@rpath/##p'
+    done | sort -u | while read -r name; do
+        [ -e "$contents/Frameworks/$name" ] || echo "$name"
+    done)
+    [ -n "$missing" ] || break
+    for name in $missing; do
+        found=""
+        for directory in $search; do
+            if [ -e "$directory/$name" ]; then found="$directory/$name"; break; fi
+        done
+        if [ -z "$found" ]; then
+            echo "error: cannot find $name in $search" >&2
+            exit 1
+        fi
+        echo "Adding $name"
+        cp -L "$found" "$contents/Frameworks/$name"
+        chmod u+w "$contents/Frameworks/$name"
+    done
+done
+
 # Icon from the brand PNG master.
 iconset="$out/Photon.iconset"
 rm -rf "$iconset"
@@ -75,6 +105,15 @@ for file in "$contents/MacOS/"* "$contents/Frameworks/"*; do
     codesign --force --sign - "$file"
 done
 codesign --force --sign - "$app"
+
+leftover=$(for file in "$contents/MacOS/"* "$contents/Frameworks/"*; do
+    [ -f "$file" ] && file -b "$file" | grep -q Mach-O && otool -L "$file" | grep "$root" || true
+done)
+if [ -n "$leftover" ]; then
+    echo "error: libraries still referenced from the build tree:" >&2
+    echo "$leftover" >&2
+    exit 1
+fi
 
 echo "Bundled $app"
 du -sh "$app"
