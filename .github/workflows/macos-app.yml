@@ -14,7 +14,15 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 360
     env:
       CCACHE_DIR: ${{ github.workspace }}/../ccache
@@ -58,8 +66,8 @@ jobs:
           path: |
             ${{ github.workspace }}/../ccache
             ${{ github.workspace }}/../vcpkg-cache
-          key: engine-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: engine-${{ runner.os }}-
+          key: engine-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: engine-${{ matrix.arch }}-
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -75,7 +83,7 @@ jobs:
           path: |
             ${{ github.workspace }}/../ccache
             ${{ github.workspace }}/../vcpkg-cache
-          key: engine-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: engine-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Build presentation broker
         run: cargo build --release -p photon-presentation-broker
@@ -109,21 +117,21 @@ jobs:
       - name: Zip
         if: always()
         run: |
-          [ -d dist/Photon.app ] && ditto -c -k --keepParent dist/Photon.app dist/Photon-macOS-arm64.zip || true
+          [ -d dist/Photon.app ] && ditto -c -k --keepParent dist/Photon.app dist/Photon-macOS-${{ matrix.arch }}.zip || true
 
       - name: Upload app
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Photon-macOS-arm64
-          path: dist/Photon-macOS-arm64.zip
+          name: Photon-macOS-${{ matrix.arch }}
+          path: dist/Photon-macOS-${{ matrix.arch }}.zip
           if-no-files-found: ignore
 
       - name: Upload smoke test
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: smoke-test
+          name: smoke-test-${{ matrix.arch }}
           path: |
             smoke.log
             smoke.png
