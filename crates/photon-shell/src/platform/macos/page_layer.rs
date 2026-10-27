@@ -142,9 +142,12 @@ impl PageLayer {
         let host_layer = host
             .layer()
             .expect("GPUI's AppKit host view must have a Core Animation layer");
-        let parent_layer = host_layer
-            .superlayer()
-            .expect("GPUI's AppKit host layer must have a superlayer");
+        // AppKit attaches the host layer once the window is first displayed;
+        // a page can be placed before that, so try again next frame.
+        let Some(parent_layer) = host_layer.superlayer() else {
+            window.request_animation_frame();
+            return;
+        };
         let layer = &self.layer;
         let attached = layer
             .superlayer()
