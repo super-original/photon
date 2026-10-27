@@ -1,0 +1,127 @@
+name: macOS app
+
+on:
+  push:
+    branches: [macos-build]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-app-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 360
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/../ccache
+      CCACHE_MAXSIZE: 6G
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/../vcpkg-cache,readwrite
+    steps:
+      - name: Check out Photon and pinned submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Free disk space
+        run: |
+          df -h /
+          selected=$(realpath "$(xcode-select -p)/../..")
+          for xcode in /Applications/Xcode*.app; do
+            [ -L "$xcode" ] && continue
+            [ "$(realpath "$xcode")" = "$selected" ] && continue
+            sudo rm -rf "$xcode" &
+          done
+          sudo rm -rf ~/Library/Android /usr/local/share/dotnet ~/.dotnet ~/.ghcup \
+            /Library/Developer/CoreSimulator/Images ~/Library/Developer/CoreSimulator &
+          wait
+          df -h /
+          echo "Xcode: $selected"; clang --version
+
+      - name: Install build packages
+        run: |
+          brew install autoconf autoconf-archive automake ccache cmake libtool nasm ninja pkg-config python qt || true
+          cmake --version; ninja --version
+          mkdir -p "$CCACHE_DIR" "${{ github.workspace }}/../vcpkg-cache"
+
+      - name: Restore Engine caches
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ github.workspace }}/../ccache
+            ${{ github.workspace }}/../vcpkg-cache
+          key: engine-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: engine-${{ runner.os }}-
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build Photon
+        timeout-minutes: 320
+        run: ./photon build --verbose
+
+      - name: Save Engine caches
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ github.workspace }}/../ccache
+            ${{ github.workspace }}/../vcpkg-cache
+          key: engine-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Build presentation broker
+        run: cargo build --release -p photon-presentation-broker
+
+      - name: List build outputs
+        run: |
+          ls -la build build/app-release build/Resources
+          ls -la build/engine-release/lib | head -80
+          for f in target/release/Photon build/app-release/WebContent; do
+            echo "== $f"; otool -L "$f"; otool -l "$f" | grep -A2 LC_RPATH
+          done
+
+      - name: Bundle Photon.app
+        run: sh packaging/macos/bundle.sh dist
+
+      - name: Smoke test from a moved copy
+        continue-on-error: true
+        run: |
+          mkdir -p /tmp/moved
+          ditto dist/Photon.app /tmp/moved/Photon.app
+          PHOTON_VERBOSE=1 PHOTON_URL=https://example.com PHOTON_SHUTDOWN_AFTER_SECONDS=40 \
+            /tmp/moved/Photon.app/Contents/MacOS/Photon > smoke.log 2>&1 &
+          pid=$!
+          sleep 30
+          screencapture -x smoke.png || true
+          status=0; wait $pid || status=$?
+          tail -150 smoke.log
+          echo "exit status: $status"
+          exit $status
+
+      - name: Zip
+        if: always()
+        run: |
+          [ -d dist/Photon.app ] && ditto -c -k --keepParent dist/Photon.app dist/Photon-macOS-arm64.zip || true
+
+      - name: Upload app
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Photon-macOS-arm64
+          path: dist/Photon-macOS-arm64.zip
+          if-no-files-found: ignore
+
+      - name: Upload smoke test
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test
+          path: |
+            smoke.log
+            smoke.png
+          if-no-files-found: ignore
