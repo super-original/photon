@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-26
+    runs-on: macos-15
     timeout-minutes: 360
     env:
       CCACHE_DIR: ${{ github.workspace }}/../ccache
@@ -31,6 +31,9 @@ jobs:
       - name: Free disk space
         run: |
           df -h /
+          ls -d /Applications/Xcode*.app
+          newest=$(ls -d /Applications/Xcode_*.app | grep -v -i beta | sort -V | tail -1)
+          [ -n "$newest" ] && sudo xcode-select -s "$newest"
           selected=$(realpath "$(xcode-select -p)/../..")
           for xcode in /Applications/Xcode*.app; do
             [ -L "$xcode" ] && continue
